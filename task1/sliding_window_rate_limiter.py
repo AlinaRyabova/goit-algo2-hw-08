@@ -1,0 +1,109 @@
+import random
+from typing import Dict
+import time
+from collections import deque
+
+class SlidingWindowRateLimiter:
+    def __init__(self, window_size: int = 10, max_requests: int = 1):
+        """
+        Ініціалізація класу SlidingWindowRateLimiter.
+        :param window_size: Розмір вікна в секундах.
+        :param max_requests: Максимальна кількість запитів у вікні.
+        """
+        self.window_size = window_size
+        self.max_requests = max_requests
+        self.user_history: Dict[str, deque] = {}
+
+    def _cleanup_window(self, user_id: str, current_time: float) -> None:
+        """
+        Видаляє застарілі записи з вікна користувача.
+        :param user_id: Ідентифікатор користувача.
+        :param current_time: Поточний час у секундах.
+        """
+        if user_id in self.user_history:
+            while self.user_history[user_id] and self.user_history[user_id][0] <= current_time - self.window_size:
+                self.user_history[user_id].popleft()
+
+            # Видаляємо користувача, якщо вікно стало порожнім
+            if not self.user_history[user_id]:
+                del self.user_history[user_id]
+
+    def can_send_message(self, user_id: str) -> bool:
+        """
+        Перевіряє, чи може користувач надіслати повідомлення.
+        :param user_id: Ідентифікатор користувача.
+        :return: True, якщо можна відправити повідомлення, інакше False.
+        """
+        current_time = time.time()
+        self._cleanup_window(user_id, current_time)
+        
+        # Перевіряємо, чи не перевищено ліміт
+        if user_id not in self.user_history or len(self.user_history[user_id]) < self.max_requests:
+            return True
+        return False
+
+    def record_message(self, user_id: str) -> bool:
+        """
+        Записує повідомлення користувача, якщо це дозволено.
+        :param user_id: Ідентифікатор користувача.
+        :return: True, якщо повідомлення записано, інакше False.
+        """
+        if self.can_send_message(user_id):
+            current_time = time.time()
+            if user_id not in self.user_history:
+                self.user_history[user_id] = deque()
+            self.user_history[user_id].append(current_time)
+            return True
+        return False
+
+    def time_until_next_allowed(self, user_id: str) -> float:
+        """
+        Обчислює час очікування до можливості відправити наступне повідомлення.
+        :param user_id: Ідентифікатор користувача.
+        :return: Час у секундах до наступного дозволеного повідомлення.
+        """
+        if user_id not in self.user_history or not self.user_history[user_id]:
+            return 0.0
+
+        current_time = time.time()
+        earliest_message_time = self.user_history[user_id][0]
+        time_until_allowed = (earliest_message_time + self.window_size) - current_time
+        return max(0.0, time_until_allowed)
+
+
+
+def test_rate_limiter():
+    # Створюємо rate limiter: вікно 10 секунд, 1 повідомлення
+    limiter = SlidingWindowRateLimiter(window_size=10, max_requests=1)
+
+    # Симулюємо потік повідомлень від користувачів (послідовні ID від 1 до 20)
+    print("\n=== Симуляція потоку повідомлень ===")
+    for message_id in range(1, 11):
+        # Симулюємо різних користувачів (ID від 1 до 5)
+        user_id = message_id % 5 + 1
+
+        result = limiter.record_message(str(user_id))
+        wait_time = limiter.time_until_next_allowed(str(user_id))
+
+        print(f"Повідомлення {message_id:2d} | Користувач {user_id} | "
+              f"{'✓' if result else f'× (очікування {wait_time:.1f}с)'}")
+
+        # Невелика затримка між повідомленнями для реалістичності
+        time.sleep(random.uniform(0.1, 1.0))
+
+    # Чекаємо, поки вікно очиститься
+    print("\nОчікуємо 4 секунди...")
+    time.sleep(4)
+
+    print("\n=== Нова серія повідомлень після очікування ===")
+    for message_id in range(11, 21):
+        user_id = message_id % 5 + 1
+        result = limiter.record_message(str(user_id))
+        wait_time = limiter.time_until_next_allowed(str(user_id))
+        print(f"Повідомлення {message_id:2d} | Користувач {user_id} | "
+              f"{'✓' if result else f'× (очікування {wait_time:.1f}с)'}")
+        # Випадкова затримка від 0.1 до 1 секунди
+        time.sleep(random.uniform(0.1, 1.0))
+
+if __name__ == "__main__":
+    test_rate_limiter()
